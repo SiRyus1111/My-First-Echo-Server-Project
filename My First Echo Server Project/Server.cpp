@@ -1,8 +1,10 @@
-#include <iostream>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include "Common.h"
-#include <cstdio>
+#include <iostream> // 콘솔 입출력 용 - cout, cin, ...
+#include <winsock2.h> // 윈속2 메인 헤더 - socket(), bind(), listen(), accept(), recv(), send(), ...
+#include <ws2tcpip.h> // 윈속2 확장 헤더 - inet_ntop(), inet_pton(), ...
+#include "Common.h" // 사용자 정의 라이브러리. 소켓 함수 오류 출력 함수 포함. err_quit(), err_display() 함수는 Common.h에 정의되어 있음.
+// #include <cstdio> / 이거 왜 썼을까? / 일단 지금은 이 라이브러리가 있었다는 기록만 남겨둠. 주석 처리. 주석 처리.
+#include <cstdlib> // atoi() 함수 사용하기 위해서
+#include <cstring> // memcpy() 함수 사용하기 위해서
 
 const int SERVER_PORT = 9000;
 const int BUFFER_SIZE = 4096;
@@ -15,6 +17,7 @@ const int HEADER_SIZE = 4;
 
 #pragma comment(lib, "Ws2_32.lib")
 
+// 상태 관리 구조체
 struct flags {
 
 	bool header_recv = false;
@@ -24,6 +27,7 @@ struct flags {
 
 	bool if_error = false;
 	bool if_client_exit = false;
+
 };
 
 int main() {
@@ -47,7 +51,7 @@ int main() {
 	// 서버 주소 정보 설정
 	server_addr.sin_family = AF_INET;
 	server_addr.sin_port = htons(9000);
-	server_addr.sin_addr.s_addr = htonl(ADDR_ANY);
+	server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 	// LISTEN용 소켓에 서버 주소 정보 바인딩 
 	if (bind(server_sock, (sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
@@ -66,7 +70,6 @@ int main() {
 	sockaddr_in client_addr{};
 
 	// 클라이언트로부터 수신한 메시지를 저장할 버퍼
-	char buf[BUFFER_SIZE + 1];
 	char buf[BUFFER_SIZE + 1];
 	int addr_len;
 
@@ -128,18 +131,19 @@ int main() {
 
 
 
-			uint32_t header = atoi(header_buf);
+			uint32_t net_header;
+			memcpy((void*) net_header, header_buf, HEADER_SIZE);
 
 			// 보냈을 때 네트워크 바이트 정렬로 보냈으니까 받았을 때 다시 호스트 바이트 정렬로 변환 + 형식도 uint32_t로 유지
-			header = ntohl(header);
+			uint32_t host_header = ntohl(net_header);
 
 			// 페이로드 recv()
 			int payload_received = 0;
 
 			flags.payload_recv = true;
-			while (payload_received < header) {
+			while (payload_received < host_header) {
 
-				int recv_len = recv(client_sock, buf + payload_received, header - payload_received, 0);
+				int recv_len = recv(client_sock, buf + payload_received, host_header - payload_received, 0);
 
 				if (recv_len == SOCKET_ERROR) {
 					err_display("recv()");
@@ -151,15 +155,15 @@ int main() {
 					break;
 				}
 
-				buf[recv_len] = '\0';
+				
 			}
-
+			buf[payload_received] = '\0';
 
 			std::cout << "송신한 클라이언트 : IP 주소 = " << ntohl(client_addr.sin_addr.s_addr) << " 포트 번호 = " << ntohs(client_addr.sin_port) << '\n';
 			std::cout << "받은 바이트 수 : " << payload_received << " 받은 메시지 : " << buf << '\n';
 
 			// 헤더 send(), 페이로드 send()
-			int send_len = send(client_sock, buf, header, 0);
+			int send_len = send(client_sock, buf, host_header, 0);
 
 			if (send_len == SOCKET_ERROR) {
 				err_display("send()");
