@@ -32,9 +32,10 @@ struct flags {
 
 int main() {
 	WSADATA wsa;
+	int WSAStartup_result = WSAStartup(MAKEWORD(2, 2), &wsa);
 
-	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-		std::cout << "윈속 초기화 실패\n";
+	if (WSAStartup_result != 0) {
+		std::cout << "윈속 초기화 실패. 에러 코드 : " << WSAStartup_result << '\n';
 		return 1;
 	}
 
@@ -59,7 +60,7 @@ int main() {
 		return 1;
 	}
 
-	// LISTTEN용 소켓을 LISTEN 상태로 전환, 백 로그 크기는 가능한 최대 크기인 SOMAXCONN으로 설정
+	// LISTEN용 소켓을 LISTEN 상태로 전환, 백 로그 크기는 가능한 최대 크기인 SOMAXCONN으로 설정
 	if (listen(server_sock, SOMAXCONN) == SOCKET_ERROR) {
 		err_quit("listen()");
 		return 1;
@@ -70,7 +71,8 @@ int main() {
 	sockaddr_in client_addr{};
 
 	// 클라이언트로부터 수신한 메시지를 저장할 버퍼
-	char buf[BUFFER_SIZE + 1];
+	// 버퍼의 마지막 바이트는 문자열이 끝나는 지점을 나타내는 널 문자('\0')를 저장.
+	char buf[BUFFER_SIZE];
 	int addr_len;
 
 
@@ -79,19 +81,19 @@ int main() {
 
 		addr_len = sizeof(client_addr);
 
-		// accept 함수를 실행. 블로킹임.
+		// accept 함수를 실행. accept 함수는 블로킹임. 그래서 연결 정보가 백로그 큐에 들어올 때까지 이 부분에서 멈춰있음. 이 함수를 지나쳐갈까 걱정할 필요 X
 		client_sock = accept(server_sock, (sockaddr*)&client_addr, &addr_len);
 
 		if (client_sock == INVALID_SOCKET) {
 			err_display("accept()");
-			break;
+			continue; // accept() 실패했을 때는 클라이언트와의 연결이 이루어지지 않은 상태이므로, 다음 반복으로 넘어가서 다시 accept() 시도
 		}
 
 		// 출력용으로 클라이언트 IP 주소를 문자열로 저장
 		char addr[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, &client_addr, addr, sizeof(addr));
+		inet_ntop(AF_INET, &client_addr.sin_addr, addr, sizeof(addr));
 
-		std::cout << "클라이언트 접속됨 : IP 주소 = " << addr << " 포트 번호 = " << htons(client_addr.sin_port) << '\n';
+		std::cout << "클라이언트 접속됨 : IP 주소 = " << addr << " 포트 번호 = " << ntohs(client_addr.sin_port) << '\n';
 
 		struct flags flags;
 
@@ -105,7 +107,7 @@ int main() {
 			flags.header_recv = true;
 			while (header_received < HEADER_SIZE)
 			{
-				int header_recv_len = recv(client_sock, header_buf + header_received, HEADER_SIZE, 0);
+				int header_recv_len = recv(client_sock, header_buf + header_received, HEADER_SIZE - header_received, 0);
 
 				if (header_received != HEADER_SIZE) {
 					std::cout << "헤더 부분적 수신 : " << header_recv_len << "바이트 수신됨.\n";
@@ -132,7 +134,7 @@ int main() {
 
 
 			uint32_t net_header;
-			memcpy((void*) net_header, header_buf, HEADER_SIZE);
+			memcpy(&net_header, header_buf, HEADER_SIZE);
 
 			// 보냈을 때 네트워크 바이트 정렬로 보냈으니까 받았을 때 다시 호스트 바이트 정렬로 변환 + 형식도 uint32_t로 유지
 			uint32_t host_header = ntohl(net_header);
@@ -155,7 +157,7 @@ int main() {
 					break;
 				}
 
-				
+				payload_received += recv_len;
 			}
 			buf[payload_received] = '\0';
 
