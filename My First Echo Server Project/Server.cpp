@@ -72,7 +72,7 @@ int main() {
 
 	// 클라이언트로부터 수신한 메시지를 저장할 버퍼
 	// 버퍼의 마지막 바이트는 문자열이 끝나는 지점을 나타내는 널 문자('\0')를 저장.
-	char buf[BUFFER_SIZE];
+	char buf[BUFFER_SIZE + 1]; // 맨 뒤에 널문자를 집어넣기 위해 BUFFER_SIZE + 1(널문자 여유 공간) 으로 버퍼 크기 설정
 	int addr_len;
 
 
@@ -141,6 +141,11 @@ int main() {
 			uint32_t host_header = ntohl(net_header);
 
 			// 헤더가 버퍼 크기에 맞지 않는 경우 처리(4096 이상)
+			if (host_header > 4096) {
+				// 여기에 처리 과정 작성
+				// 로직을 어찌 짜야할지는 좀 고민해봐야할 듯
+				// 단순히 클라이언트에게 오류 메시지를 날리는건 어떨까 싶기도.. 헤더를 추가로 넣는 것 보다는..
+			}
 
 			// 페이로드 recv()
 			int payload_received = 0;
@@ -179,13 +184,12 @@ int main() {
 			// 처리 과정 (여기서는 단순히 받은 메시지를 그대로 보내는 에코 서버이므로, 처리 과정은 생략)
 
 			// 헤더를 송신할 수 있는 형태로 처리하는 과정
-			uint32_t host_send_header = strlen(buf);
+			uint32_t host_send_header = payload_received;
 			uint32_t net_send_header = htonl(host_send_header);
 
-			memcpy(&header_buf, &net_send_header, HEADER_SIZE);
+			memcpy(header_buf, &net_send_header, HEADER_SIZE);
 
 			// 헤더 send()
-
 			int header_sent = 0;
 			// 헤더를 저장할 버퍼는 header_buf가 이미 있음
 
@@ -212,7 +216,6 @@ int main() {
 			flags.header_send = false;
 
 			// 페이로드 send()
-
 			int payload_sent = 0;
 
 			flags.payload_send = true;
@@ -231,6 +234,10 @@ int main() {
 					std::cout << "페이로드 부분적 송신 : " << send_len << "바이트 송신됨.\n";
 				}
 			}
+
+			if (flags.if_error) break;
+
+			flags.payload_send = false;
 			
 			/*
 			int send_len = send(client_sock, buf, host_header, 0);
@@ -243,10 +250,12 @@ int main() {
 
 			*/
 		}
-
+		// 여기에 클라이언트와 통신을 끝내야 하는 상황에 실행할 코드 작성
 	}
 
 	closesocket(server_sock);
+
+	WSACleanup();
 
 	return 0;
 }
