@@ -51,7 +51,7 @@ int main() {
 
 	// 서버 주소 정보 설정
 	server_addr.sin_family = AF_INET;
-	server_addr.sin_port = htons(9000);
+	server_addr.sin_port = htons(SERVER_PORT);
 	server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 	// LISTEN용 소켓에 서버 주소 정보 바인딩 
@@ -102,16 +102,13 @@ int main() {
 
 			// 헤더 recv()
 			int header_received = 0;
-			char header_buf[4]{};
+			char header_buf[HEADER_SIZE]{};
 
 			flags.header_recv = true;
 			while (header_received < HEADER_SIZE)
 			{
 				int header_recv_len = recv(client_sock, header_buf + header_received, HEADER_SIZE - header_received, 0);
 
-				if (header_received != HEADER_SIZE) {
-					std::cout << "헤더 부분적 수신 : " << header_recv_len << "바이트 수신됨.\n";
-				}
 				if (header_recv_len == SOCKET_ERROR) {
 					err_display("recv()");
 					flags.if_error = true;
@@ -123,6 +120,10 @@ int main() {
 				}
 
 				header_received += header_recv_len;
+
+				if (header_received != HEADER_SIZE) {
+					std::cout << "헤더 부분적 수신 : " << header_recv_len << "바이트 수신됨.\n";
+				}
 			}
 
 			if (flags.if_error || flags.if_client_exit) break;
@@ -132,12 +133,14 @@ int main() {
 			std::cout << "헤더 수신 완료 : 총 " << header_received << "바이트 수신됨.\n";
 
 
-
+			// 해더 해석
 			uint32_t net_header;
 			memcpy(&net_header, header_buf, HEADER_SIZE);
 
 			// 보냈을 때 네트워크 바이트 정렬로 보냈으니까 받았을 때 다시 호스트 바이트 정렬로 변환 + 형식도 uint32_t로 유지
 			uint32_t host_header = ntohl(net_header);
+
+			// 헤더가 버퍼 크기에 맞지 않는 경우 처리(4096 이상)
 
 			// 페이로드 recv()
 			int payload_received = 0;
@@ -158,13 +161,78 @@ int main() {
 				}
 
 				payload_received += recv_len;
+
+				if (payload_received != host_header) {
+					std::cout << "페이로드 부분적 수신 : " << recv_len << "바이트 수신됨.\n";
+				}
 			}
+
+			if (flags.if_client_exit || flags.if_error) break;
+
+			flags.payload_recv = false;
+
 			buf[payload_received] = '\0';
 
 			std::cout << "송신한 클라이언트 : IP 주소 = " << ntohl(client_addr.sin_addr.s_addr) << " 포트 번호 = " << ntohs(client_addr.sin_port) << '\n';
 			std::cout << "받은 바이트 수 : " << payload_received << " 받은 메시지 : " << buf << '\n';
 
-			// 헤더 send(), 페이로드 send()
+			// 처리 과정 (여기서는 단순히 받은 메시지를 그대로 보내는 에코 서버이므로, 처리 과정은 생략)
+
+			// 헤더를 송신할 수 있는 형태로 처리하는 과정
+			uint32_t host_send_header = strlen(buf);
+			uint32_t net_send_header = htonl(host_send_header);
+
+			memcpy(&header_buf, &net_send_header, HEADER_SIZE);
+
+			// 헤더 send()
+
+			int header_sent = 0;
+			// 헤더를 저장할 버퍼는 header_buf가 이미 있음
+
+			flags.header_send = true;
+			while (header_sent < HEADER_SIZE) {
+				int header_send_len = send(client_sock, header_buf + header_sent, HEADER_SIZE - header_sent, 0);
+
+				if (header_send_len == SOCKET_ERROR) {
+					err_display("send()");
+					flags.if_error = true;
+					break;
+				}
+
+				header_sent += header_send_len;
+
+				if (header_sent != HEADER_SIZE) {
+					std::cout << "헤더 부분적 송신 : " << header_send_len << "바이트 송신됨.\n";
+				}
+			}
+
+			// 여기에서는 send()의 반환값이 0이어서 클라이언트가 연결을 끊었다는 것을 알 수 있는 상황이 없음. 그래서 클라이언트가 연결을 끊은 경우는 처리 안함.
+			if (flags.if_error) break;
+			
+			flags.header_send = false;
+
+			// 페이로드 send()
+
+			int payload_sent = 0;
+
+			flags.payload_send = true;
+			while (payload_sent < host_send_header) {
+				int send_len = send(client_sock, buf + payload_sent, host_send_header - payload_sent, 0);
+
+				if (send_len == SOCKET_ERROR) {
+					err_display("send()");
+					flags.if_error = true;
+					break;
+				}
+
+				payload_sent += send_len;
+
+				if (payload_sent < host_send_header) {
+					std::cout << "페이로드 부분적 송신 : " << send_len << "바이트 송신됨.\n";
+				}
+			}
+			
+			/*
 			int send_len = send(client_sock, buf, host_header, 0);
 
 			if (send_len == SOCKET_ERROR) {
@@ -172,6 +240,8 @@ int main() {
 				break;
 			}
 			std::cout << addr << " : " << htons(client_addr.sin_port) << " 클라이언트로 " << send_len << " 바이트 보냄\n";
+
+			*/
 		}
 
 	}
