@@ -15,6 +15,9 @@ const int HEADER_SIZE = 4;
 // 2. 처리하고, 클라이언트의 uint32_t형의 보낸 페이로드 바이트 수를 나타내는 헤더 전송하기
 // 3. 연결을 끊을 때.. 어카면 좋을까..?
 
+// 헤더 규칙
+// 첫 4바이트 = uint32_t 페이로드 크기(길이)
+
 #pragma comment(lib, "Ws2_32.lib")
 
 // 상태 관리 구조체
@@ -53,6 +56,12 @@ int main() {
 	server_addr.sin_family = AF_INET;
 	server_addr.sin_port = htons(SERVER_PORT);
 	server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	int option = 1;
+	if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&option, sizeof(option)) == SOCKET_ERROR) {
+		err_display("setsockopt()");
+		return 1;
+	}
 
 	// LISTEN용 소켓에 서버 주소 정보 바인딩 
 	if (bind(server_sock, (sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
@@ -178,7 +187,7 @@ int main() {
 
 			buf[payload_received] = '\0';
 
-			std::cout << "송신한 클라이언트 : IP 주소 = " << ntohl(client_addr.sin_addr.s_addr) << " 포트 번호 = " << ntohs(client_addr.sin_port) << '\n';
+			std::cout << "송신한 클라이언트 : IP 주소 = " << addr << " 포트 번호 = " << ntohs(client_addr.sin_port) << '\n';
 			std::cout << "받은 바이트 수 : " << payload_received << " 받은 메시지 : " << buf << '\n';
 
 			// 처리 과정 (여기서는 단순히 받은 메시지를 그대로 보내는 에코 서버이므로, 처리 과정은 생략)
@@ -251,6 +260,26 @@ int main() {
 			*/
 		}
 		// 여기에 클라이언트와 통신을 끝내야 하는 상황에 실행할 코드 작성
+		// 여기 검사해야할 조건이 많아지면 if문 폭탄으로 Branch Prediction 성능 많이 떨어질 듯. 개선 필요.
+		if (flags.if_error) {
+			std::cout << "클라이언트와의 통신 과정에서 오류 발생 : ";
+
+			if (flags.header_recv) std::cout << "헤더 수신 과정에서 오류 발생\n";
+
+			else if (flags.payload_recv) std::cout << "페이로드 수신 과정에서 오류 발생\n";
+
+			else if (flags.header_send) std::cout << "헤더 송신 과정에서 오류 발생\n";
+			
+			else if (flags.header_send) std::cout << "페이로드 송신 과정에서 오류 발생\n";
+
+		}
+		else {
+			std::cout << "클라이언트에서 연결을 종료하였습니다.\n";
+		}
+
+		std::cout << "클라이언트와의 연결을 종료합니다. 클라이언트의 IP 주소 = " << addr << " 포트 번호 = " << ntohs(client_addr.sin_port) << '\n';
+
+		closesocket(client_sock);
 	}
 
 	closesocket(server_sock);
