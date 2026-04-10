@@ -40,3 +40,8 @@
 
 # debug information files
 *.dwo
+
+*.tlog
+*.log
+*.recipe
+*.idb
