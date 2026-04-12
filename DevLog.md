@@ -27,3 +27,33 @@
 - 메모 :
   - 정상 동작은 확인했으니, 이제 예외 처리와 함수 분리, 기타 리팩토링이 남았다.
   - flags 구조체 변수 이름 바꾸는거 자꾸 미루고 있는데, 이거 다음에 꼭 하자..
+
+### 2026.4.13
+
+- 헤더의 버퍼 크기 초과 예외 처리 추가.
+  - 클라이언트에서 메시지를 입력 받고 메시지의 바이트 수를 잰 후
+  - 서버에서 클라이언트가 보낸 헤더를 recv() 한 후
+  - 클라이언트에서 서버가 보낸 헤더를 recv() 한 후
+  - 만약 버퍼 최대 크기인 4096(바이트) 이상이라면 에러로 처리한다. (state.if_header_error = true)
+  - 클라이언트에서 메시지를 입력 받고 메시지의 바이트 수를 잰 후에는 바이트 초과 메시지를 출력 후 다시 입력을 받는다.
+  - 그리고 헤더를 recv() 한 후에는 바로 break하여 페이로드 수신을 차단한다.
+- send_all() / recv_all()로 기존 send() / recv() 로직 분리
+  - partial send / recv 처리 로직을 공통 함수로 통합
+  - `int send_all(SOCKET sock, flags& state, const char* msg, int len)`
+  - `int recv_all(SOCKET sock, flags& state, char* buf, int len)`
+  - 반환값 : 
+	- 상대가 연결 종료시(recv() == 0 / recv_all() 한정) = 0
+	- 전송 과정에서 send() / recv() 가 SOCKET_ERROR를 반환할 시 = SOCKET_ERROR
+	- 정상적으로 send() / recv() 루프를 마칠 시 = send() / recv()로 처리한 총 바이트 수
+  - 통신 과정에서의 예외 상황은 함수 내에서 flags형 구조체인 state에 기록.
+  - 현재 진행하는 과정을 알려주는 state의 멤버는 함수 밖에서 state에 기록해야함.
+- 서버 -> 클라이언트 에러 메시지 전송 정책 설계
+  - 헤더에 너무 큰 값(>4096)이 들어왔을 때(state.if_header_error == true) - 클라이언트에 메시지 보내고 서버 종료
+  - 클라이언트가 종료(state.if_peer_exit == true (recv_all() == 0)) - 클라이언트에 아무런 메시지 보내지 않고 종료(딱히 클라이언트에 서버에서의 연결 종료를 알릴 이유가 없음) 
+  - send() / recv()가 SOCKET_ERROR를 반환함(state.if_error == true) - 클라이언트에 아무런 메시지 보내지 않고 종료(SOCKET_ERROR가 반환되었다는건 이미 연결이 깨졌을 가능성이 충분히 있기 때문에)
+  - transport error(if_error)와 protocol error(if_header_error)를 구분하여 종료 정책을 다르게 설계
+- 서버의 flags 구조체 변수 이름 변경
+  - flags -> server_state
+- flags 구조체의 멤버를 추가 & 가독성을 위해 기존 멤버의 이름을 변경
+  - if_header_error 추가
+  - if_server_exit / if_client_exit -> if_peer_exit

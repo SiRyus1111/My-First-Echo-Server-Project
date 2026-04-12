@@ -17,11 +17,68 @@ struct flags {
 	bool payload_send = false;
 
 	bool if_error = false;
-	bool if_server_exit = false;
+	bool if_peer_exit = false;
+	bool if_header_error = false;
 };
 
 // 헤더 규칙
 // 첫 4바이트 = uint32_t 페이로드 크기(길이)
+
+int send_all(SOCKET sock, flags& state, const char* msg, int len) {
+
+	int sent_byte = 0;
+
+	while (sent_byte < len) {
+		int send_len = send(sock, msg + sent_byte, len - sent_byte, 0);
+
+		if (send_len == SOCKET_ERROR) {
+			err_display("send()");
+			state.if_error = true;
+			return SOCKET_ERROR;
+		}
+
+		sent_byte += send_len;
+
+		if (sent_byte != len) {
+			std::cout << "부분적 송신 : " << send_len << '/' << len << "바이트 송신됨.\n";
+		}
+	}
+
+	std::cout << "송신 완료 : 총" << sent_byte << '/' << len << "바이트 송신됨.\n";
+
+	return sent_byte;
+}
+
+int recv_all(SOCKET sock, flags& state, char* buf, int len) {
+
+	int received_byte = 0;
+
+	while (received_byte < len)
+	{
+		int recv_len = recv(sock, buf + received_byte, len - received_byte, 0);
+
+		if (recv_len == SOCKET_ERROR) {
+			err_display("recv()");
+			state.if_error = true;
+			return SOCKET_ERROR;
+		}
+		else if (recv_len == 0) {
+			state.if_peer_exit = true;
+			return 0;
+		}
+
+		received_byte += recv_len;
+
+		if (received_byte != len) {
+			std::cout << "부분적 수신 : " << recv_len << '/' << len << "바이트 수신됨.\n";
+		}
+	}
+
+
+	std::cout << "수신 완료 : 총 " << received_byte << '/' << len << "바이트 수신됨.\n";
+
+	return received_byte;
+}
 
 int main() {
 
@@ -69,119 +126,57 @@ int main() {
 		// 입력 받은 바이트 수 세기
 		uint32_t host_header = user_input.size();
 		uint32_t net_header = htonl(host_header);
+
+		if (host_header > BUFFER_SIZE) {
+			std::cout << "헤더의 값이 최대 버퍼 크기인 4096(바이트)을 초과. 다시 메시지를 입력해주세요.\n";
+			continue;
+		}
 		
 		char header_buf[HEADER_SIZE];
 
 		memcpy(header_buf, &net_header, sizeof(header_buf));
 
-		// 헤더, 페이로드 각각 send()
-		int header_sent = 0;
-
+		// 헤더 send()
 		client_state.header_send = true;
-		while (header_sent < HEADER_SIZE) {
-			int header_send_len = send(sock, header_buf + header_sent, HEADER_SIZE - header_sent, 0);
+		int header_send_res = send_all(sock, client_state, header_buf, HEADER_SIZE);
 
-			if (header_send_len == SOCKET_ERROR) {
-				err_display("send");
-				client_state.if_error = true;
-				break;
-			}
-
-			header_sent += header_send_len;
-
-			if (header_sent != HEADER_SIZE) {
-				std::cout << "헤더 부분적 송신 : " << header_send_len << "바이트 송신됨.\n";
-			}
-		}
-		
-		if (client_state.if_error) break;
+		if (header_send_res == SOCKET_ERROR) break;
 
 		client_state.header_send = false;
 
-		std::cout << "헤더 송신 완료 : 총" << header_sent << "바이트 송신됨.\n";
-
-		int payload_sent = 0;
-
+		// 페이로드 send()
 		client_state.payload_send = true;
-		while (payload_sent < host_header) {
-			int payload_send_len = send(sock, buf + payload_sent, host_header - payload_sent, 0);
+		int payload_send_res = send_all(sock, client_state, buf, host_header);
 
-			if (payload_send_len == SOCKET_ERROR) {
-				err_display("send()");
-				client_state.if_error = true;
-				break;
-			}
-
-			payload_sent += payload_send_len;
-
-			if (payload_sent != host_header) {
-				std::cout << "페이로드 부분적 송신 : " << payload_send_len << "바이트 송신됨.\n";
-			}
-		}
-
-		if (client_state.if_error) break;
+		if (payload_send_res == SOCKET_ERROR) break;
 
 		client_state.payload_send = false;
 
-		std::cout << "페이로드 송신 완료 : 총 " << payload_sent << "바이트 송신됨.\n";
-
-		// 헤더, 페이로드 각각 recv()
-		int header_received = 0;
+		// 헤더 recv()
 		client_state.header_recv = true;
-		while (header_received < HEADER_SIZE) {
-			int header_recv_len = recv(sock, header_buf + header_received, HEADER_SIZE - header_received, 0);
+		int header_recv_res = recv_all(sock, client_state, header_buf, HEADER_SIZE);
 
-			if (header_recv_len == SOCKET_ERROR) {
-				err_display("recv()");
-				client_state.if_error = true;
-				break;
-			}
-			if (header_recv_len == 0) {
-				client_state.if_server_exit = true;
-				break;
-			}
-
-			header_received += header_recv_len;
-
-			if (header_received != HEADER_SIZE) {
-				std::cout << "헤더 부분적 수신 : " << header_recv_len << "바이트 수신됨.\n";
-			}
-		}
-		if (client_state.if_error || client_state.if_server_exit) break;
+		if (header_recv_res == SOCKET_ERROR || header_recv_res == 0) break;
 
 		client_state.header_recv = false;
-
-		std::cout << "헤더 수신 완료 : 총 " << header_received << "바이트 수신됨. 헤더를 해석합니다.\n";
 		
+		// 헤더 해석
 		uint32_t received_net_header;
 		memcpy(&received_net_header, header_buf, HEADER_SIZE);
 		uint32_t received_host_header = ntohl(received_net_header);
 
+		if (received_host_header > 4096) {
+			client_state.if_header_error = true;
+			break;
+		}
+
 		std::cout << "헤더 해석 완료. 페이로드를 수신합니다.\n";
 
-		int payload_received = 0;
-
+		// 페이로드 recv()
 		client_state.payload_recv = true;
-		while (payload_received < received_host_header) {
-			int payload_recv_len = recv(sock, buf + payload_received, received_host_header - payload_received, 0);
+		int payload_recv_res = recv_all(sock, client_state, buf, received_host_header);
 
-			if (payload_recv_len == SOCKET_ERROR) {
-				err_display("recv()");
-				client_state.if_error = true;
-				break;
-			}
-			if (payload_recv_len == 0) {
-				client_state.if_server_exit = true;
-				break;
-			}
-
-			payload_received += payload_recv_len;
-
-			if (payload_received != received_host_header) {
-				std::cout << "페이로드 부분적 수신 : " << payload_recv_len << "바이트 수신됨.\n";
-			}
-		}
-		if (client_state.if_error || client_state.if_server_exit) break;
+		if (payload_recv_res == SOCKET_ERROR || payload_recv_res == 0) break;
 
 		client_state.payload_recv = false;
 
@@ -190,8 +185,6 @@ int main() {
 		std::cout << "[ECHO FROM SERVER]" << buf << '\n';
 	}
 	// break시 오류 발생 체크, 클라이언트 종료하기
-	// 여기도 조건 많이 추가되면 Branch Prediction 성능 떨어질 듯..
-	// 근데 어떻게 해야할지 모르겠다.. 원래 이렇게 해도 되는건가?
 	if (client_state.if_error) {
 		std::cout << "서버와의 통신 과정에서 오류 발생 : ";
 
@@ -203,10 +196,18 @@ int main() {
 
 		if (client_state.payload_recv) std::cout << "페이로드 수신 과정에서 오류 발생";
 	}
-	else if (client_state.if_server_exit) {
+	else if (client_state.if_header_error) {
+		std::cout << "서버에서 송신된 헤더의 값이 4096을 초과.\n";
+	}
+	else if (client_state.if_peer_exit) {
 		std::cout << "서버에서 연결 종료\n";
+		
+	}
+	else {
+		std::cout << "정상적으로 연결 종료..\n";
 	}
 
+	std::cout << "서버와 연결 종료됨.\n";
 
 	closesocket(sock);
 
