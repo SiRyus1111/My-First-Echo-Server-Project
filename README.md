@@ -128,3 +128,8 @@ client 실행: Client/Client.cpp
 - select / IOCP 적용(가능하다면)
 - 메시지 큐 구조 도입(채팅 서버로 확장시)
 - thread-safe 구조 개선
+
+---
+
+## 10. 개발 과정
+[velog](https://velog.io/@siryus0907/series/%EC%97%90%EC%BD%94-%EC%84%9C%EB%B2%84-%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8)
