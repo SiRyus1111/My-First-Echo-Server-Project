@@ -116,9 +116,9 @@ payload 최대 크기:
 
 include 디렉터리에 있는 Common.h 헤더를 인클루드
 
-server 실행: server.cpp
+server 실행: My First Echo Server Project/Server.cpp
 
-client 실행: client.cpp
+client 실행: Client/Client.cpp
 
 ---
 
