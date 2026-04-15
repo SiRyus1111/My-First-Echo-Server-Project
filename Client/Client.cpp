@@ -8,21 +8,42 @@
 const char* SERVER_ADDR = "127.0.0.1";
 const int SERVER_PORT = 9000;
 const int BUFFER_SIZE = 4096;
-const int HEADER_SIZE = 4;
+const int HEADER_SIZE = 8;
+const int HEADER_TYPE_SIZE = 4;
+const int HEADER_LENGTH_SIZE = 4;
+
+const char header_err_msg[] = "[CLIENT] 헤더의 최댓값 초과됨. 클라이언트에서 연결을 종료합니다.";
+uint32_t host_err_msg_len = static_cast<uint32_t>(strlen(header_err_msg));
+
+const int32_t SERVER_HEADER_ERROR = 0;
+const int32_t HEADER_SAFE = -1;
+
+#pragma pack(push, 1)
+struct PacketHeader {
+	int32_t type;
+	uint32_t length;
+};
+#pragma pack(pop)
 
 struct flags {
+	// 진행
 	bool header_recv = false;
 	bool payload_recv = false;
 	bool header_send = false;
 	bool payload_send = false;
 
+	// 예외
 	bool if_error = false;
 	bool if_peer_exit = false;
 	bool if_header_error = false;
+	bool if_peer_error = false;
 };
 
 // 헤더 규칙
-// 첫 4바이트 = uint32_t 페이로드 크기(길이)
+// 첫 4바이트 = int32_t 패킷 타입
+// 다음 4바이트 = uint32_t 페이로드 길이
+// 만약 패킷 타입의 값이 SERVER_HEADER_ERROR(0)이라면 protocol(Application Layer) error.
+// 만약 패킷 타입의 값이 CLIENT_SAFE(-1)이라면 일반적인 메시지.
 
 int send_all(SOCKET sock, flags& state, const char* msg, int len) {
 
@@ -121,24 +142,27 @@ int main() {
 
 		if (user_input == "quit") break;
 
-		strcpy_s(buf, sizeof(buf), user_input.c_str());
-
+		PacketHeader send_host_header;
 		// 입력 받은 바이트 수 세기
-		uint32_t host_header = user_input.size();
-		uint32_t net_header = htonl(host_header);
-
-		if (host_header > BUFFER_SIZE) {
+		send_host_header.length = user_input.size();
+		if (send_host_header.length > BUFFER_SIZE) {
 			std::cout << "헤더의 값이 최대 버퍼 크기인 4096(바이트)을 초과. 다시 메시지를 입력해주세요.\n";
 			continue;
 		}
-		
-		char header_buf[HEADER_SIZE];
 
-		memcpy(header_buf, &net_header, sizeof(header_buf));
+		// 여기까지 왔다면 헤더에는 문제 없음
+
+		// 헤더 직렬화(?)
+		memcpy(buf, user_input.c_str(), send_host_header.length);
+		send_host_header.type = HEADER_SAFE;
+
+		PacketHeader send_net_header;
+		send_net_header.type = htonl(send_host_header.type);
+		send_net_header.length = htonl(send_host_header.length);
 
 		// 헤더 send()
 		client_state.header_send = true;
-		int header_send_res = send_all(sock, client_state, header_buf, HEADER_SIZE);
+		int header_send_res = send_all(sock, client_state, (char*) &send_net_header, HEADER_SIZE);
 
 		if (header_send_res == SOCKET_ERROR) break;
 
@@ -146,43 +170,50 @@ int main() {
 
 		// 페이로드 send()
 		client_state.payload_send = true;
-		int payload_send_res = send_all(sock, client_state, buf, host_header);
+		int payload_send_res = send_all(sock, client_state, buf, send_host_header.length);
 
 		if (payload_send_res == SOCKET_ERROR) break;
 
 		client_state.payload_send = false;
 
+		PacketHeader recv_net_header;
+
 		// 헤더 recv()
 		client_state.header_recv = true;
-		int header_recv_res = recv_all(sock, client_state, header_buf, HEADER_SIZE);
+		int header_recv_res = recv_all(sock, client_state, (char*) &recv_net_header, HEADER_SIZE);
 
 		if (header_recv_res == SOCKET_ERROR || header_recv_res == 0) break;
 
 		client_state.header_recv = false;
 		
 		// 헤더 해석
-		uint32_t received_net_header;
-		memcpy(&received_net_header, header_buf, HEADER_SIZE);
-		uint32_t received_host_header = ntohl(received_net_header);
+		PacketHeader recv_host_header;
+		recv_host_header.type = ntohl(recv_net_header.type);
+		recv_host_header.length = ntohl(recv_net_header.length);
 
-		if (received_host_header > 4096) {
+		if (recv_host_header.length > 4096) {
 			client_state.if_header_error = true;
 			break;
 		}
-
+		
 		std::cout << "헤더 해석 완료. 페이로드를 수신합니다.\n";
 
 		// 페이로드 recv()
 		client_state.payload_recv = true;
-		int payload_recv_res = recv_all(sock, client_state, buf, received_host_header);
+		int payload_recv_res = recv_all(sock, client_state, buf, recv_host_header.length);
 
 		if (payload_recv_res == SOCKET_ERROR || payload_recv_res == 0) break;
 
 		client_state.payload_recv = false;
 
-		buf[received_host_header] = '\0';
+		buf[recv_host_header.length] = '\0';
 
 		std::cout << "[ECHO FROM SERVER]" << buf << '\n';
+
+		if (recv_host_header.type == SERVER_HEADER_ERROR) {
+			client_state.if_peer_error = true;
+			break;
+		}
 	}
 	// break시 오류 발생 체크, 클라이언트 종료하기
 	if (client_state.if_error) {
@@ -198,10 +229,27 @@ int main() {
 	}
 	else if (client_state.if_header_error) {
 		std::cout << "서버에서 송신된 헤더의 값이 4096을 초과.\n";
+
+		PacketHeader protocol_err_header;
+		protocol_err_header.type = htonl(SERVER_HEADER_ERROR);
+		protocol_err_header.length = htonl(host_err_msg_len);
+
+		int header_err_send_res = send_all(sock, client_state, (char*) &protocol_err_header, HEADER_SIZE);
+		if (header_err_send_res == SOCKET_ERROR) {
+			std::cout << "헤더 오류 메시지 서버에 전송 실패.\n";
+		}
+		else {
+			int err_send_res = send_all(sock, client_state, header_err_msg, host_err_msg_len);
+			if (err_send_res == SOCKET_ERROR) {
+				std::cout << "헤더 오류 메시지 서버에 전송 실패.\n";
+			}
+		}
+  	}
+	else if (client_state.if_peer_error) {
+		
 	}
 	else if (client_state.if_peer_exit) {
 		std::cout << "서버에서 연결 종료\n";
-		
 	}
 	else {
 		std::cout << "정상적으로 연결 종료..\n";
