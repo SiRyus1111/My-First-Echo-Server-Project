@@ -1,19 +1,16 @@
 #include <iostream> // 콘솔 입출력 용 - cout, cin, ...
 #include <winsock2.h> // 윈속2 메인 헤더 - socket(), bind(), listen(), accept(), recv(), send(), ...
 #include <ws2tcpip.h> // 윈속2 확장 헤더 - inet_ntop(), inet_pton(), ...
-#include "Common.h" // 사용자 정의 라이브러리. 소켓 함수 오류 출력 함수 포함. err_quit(), err_display() 함수는 Common.h에 정의되어 있음.
 // #include <cstdio> / 이거 왜 썼을까? / 일단 지금은 이 라이브러리가 있었다는 기록만 남겨둠. 주석 처리. 주석 처리.
 #include <cstdlib> // atoi() 함수 사용하기 위해서
 #include <cstring> // memcpy() 함수 사용하기 위해서
+#include "NetCommon.h"
 
 const int SERVER_PORT = 9000;
 const int BUFFER_SIZE = 4096;
 const int HEADER_SIZE = 8;
 const int HEADER_TYPE_SIZE = 4;
 const int HEADER_LENGTH_SIZE = 4;
-
-const int32_t HEADER_ERROR = 0;
-const int32_t HEADER_SAFE = -1;
 
 // 서버가 할 일 (클라이언트와 연동)
 // 1. 클라이언트로부터 uint32_t형의 헤더를 받아 헤더의 값만큼 페이로드 받기
@@ -28,26 +25,103 @@ const int32_t HEADER_SAFE = -1;
 
 #pragma comment(lib, "Ws2_32.lib")
 
-#pragma pack(push, 1)
-struct PacketHeader {
-	int32_t type;
-	uint32_t length;
+class WinsockGuard {
+public:
+	WinsockGuard() {
+		WSADATA wsa;
+		int WSAStartupres = WSAStartup(MAKEWORD(2, 2), &wsa);
+		if (WSAStartupres != 0) {
+			std::cerr << "에러 코드 : " << WSAStartupres << '\n';
+			throw std::runtime_error("윈속 초기화 실패");
+		}
+	}
+	~WinsockGuard() {
+		WSACleanup();
+	}
 };
-#pragma pack(pop)
 
-// 상태 관리 구조체
-struct flags {
-	// 진행
-	bool header_recv = false;
-	bool payload_recv = false;
-	bool header_send = false;
-	bool payload_send = false;
+class ClientSocket {
+private:
+	SOCKET client_sock;
+public:
+	ClientSocket(SOCKET s) : client_sock(s) {}
 
-	// 예외
-	bool if_error = false;
-	bool if_peer_exit = false;
-	bool if_header_error = false;
-	bool if_peer_error = false;
+	ClientSocket(const ClientSocket&) = delete;
+	ClientSocket& operator=(const ClientSocket&) = delete;
+
+	int ClientSockSend(NetState& state, const char* msg, int len) {
+
+		int send_res = send_all(client_sock, state, msg, len);
+		if (send_res == SOCKET_ERROR) {
+			return SOCKET_ERROR;
+		}
+
+		return send_res;
+	}
+
+	int ClientSockRecv(NetState& state, char* buf, int len) {
+
+		int recv_res = recv_all(client_sock, state, buf, len);
+		if (recv_res == SOCKET_ERROR) {
+			return SOCKET_ERROR;
+		}
+
+		return recv_res;
+	}
+
+	~ClientSocket() {
+		if (client_sock != INVALID_SOCKET) {
+			closesocket(client_sock);
+		}
+	}
+};
+
+class ListenSocket {
+private:
+	SOCKET listen_sock;
+
+public:
+	ListenSocket() {
+		listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (listen_sock == INVALID_SOCKET) {
+			err_display("socket()");
+			throw std::runtime_error("socket() 함수 실패");
+		}
+	}
+
+	ListenSocket(const ListenSocket& s) = delete;
+	ListenSocket& operator=(const ListenSocket&) = delete;
+
+	void ListenSockBind(sockaddr_in* addr) {
+		if (bind(listen_sock, (sockaddr*)addr, sizeof(*addr)) == SOCKET_ERROR){
+			err_display("bind()");
+			throw std::runtime_error("bind() 함수 실패");
+		}
+	}
+
+	void ListenSockListen() {
+		if (listen(listen_sock, SOMAXCONN) == SOCKET_ERROR) {
+			err_display("listen()");
+			throw std::runtime_error("listen() 함수 실패");
+		}
+	}
+
+	ClientSocket ListenSockAccept(sockaddr_in* client_addr) {
+		int len = sizeof(*client_addr);
+		SOCKET client_sock = accept(listen_sock, (sockaddr*)client_addr, &len);
+		if (client_sock == INVALID_SOCKET) {
+			err_display("accept()");
+			throw std::runtime_error("accept() 함수 실패");
+		}
+
+		return ClientSocket(client_sock); // 여기 해결 필요함
+	}
+
+	~ListenSocket() {
+		if (listen_sock != INVALID_SOCKET) {
+			closesocket(listen_sock);
+		}
+	}
 };
 
 const char header_err_msg[] = "[SERVER]헤더의 최댓값 초과됨. 서버에서 연결을 종료합니다.\n";
@@ -58,63 +132,6 @@ uint32_t host_err_msg_len = static_cast<uint32_t>(strlen(header_err_msg));
 const char error_msg[] = "[SERVER]송수신 과정에서의 에러 발생. 서버에서 연결을 종료합니다.\n";
 const size_t err_msg_szt = sizeof(error_msg);
 */
-
-int send_all(SOCKET sock, flags& state, const char* msg, int len) {
-	
-	int sent_byte = 0;
-
-	while (sent_byte < len) {
-		int send_len = send(sock, msg + sent_byte, len - sent_byte, 0);
-
-		if (send_len == SOCKET_ERROR) {
-			err_display("send()");
-			state.if_error = true;
-			return SOCKET_ERROR;
-		}
-
-		sent_byte += send_len;
-
-		if (sent_byte != len) {
-			std::cout << "부분적 송신 : "<<  send_len << '/' << len << "바이트 송신됨.\n";
-		}
-	}
-
-
-	std::cout << "송신 완료 : 총" << sent_byte << '/' << len << "바이트 송신됨.\n";
-
-	return sent_byte;
-}
-
-int recv_all(SOCKET sock, flags& state, char* buf, int len) {
-
-	int received_byte = 0;
-
-	while (received_byte < len)
-	{
-		int recv_len = recv(sock, buf + received_byte, len - received_byte, 0);
-
-		if (recv_len == SOCKET_ERROR) {
-			err_display("recv()");
-			state.if_error = true;
-			return SOCKET_ERROR;
-		}
-		else if (recv_len == 0) {
-			state.if_peer_exit = true;
-			return 0;
-		}
-
-		received_byte += recv_len;
-
-		if (received_byte != len) {
-			std::cout << "부분적 수신 : " << recv_len << '/' << len << "바이트 수신됨.\n";
-		}
-	}
-
-
-	std::cout << "수신 완료 : 총 " << received_byte << '/' << len << "바이트 수신됨.\n";
-
-	return received_byte;
-}
 
 int main() {
 	WSADATA wsa;
@@ -187,7 +204,7 @@ int main() {
 
 		std::cout << "클라이언트 접속됨 : IP 주소 = " << addr << " 포트 번호 = " << ntohs(client_addr.sin_port) << '\n';
 
-		struct flags server_state;
+		struct NetState server_state;
 
 		while (true) {
 
@@ -235,7 +252,7 @@ int main() {
 
 			// 헤더를 송신할 수 있는 형태로 처리하는 과정
 			PacketHeader send_host_header;
-			send_host_header.type = HEADER_SAFE;
+			send_host_header.type = SAFE;
 			send_host_header.length = payload_recv_res;
 
 			PacketHeader send_net_header;

@@ -81,3 +81,24 @@
   - sizeof()으로 널문자('\0')까지 재버리는 기존 방식 대신, strlen()으로 널문자를 제외한 문자열 길이 측정
   - 페이로드의 길이 측정 방식의 일관성을 위해서 개선
   - 수신지에서 널문자를 붙여서 출력하는 방식을 사용하므로, 널문자까지 전송할 필요 없음
+
+### 2026.4.21
+
+- 전체적인 리팩토링 시작
+  - 사용자 정의 헤더로 분리
+	- flags(신 NetState) 구조체
+	- recv_all() / send_all() 함수
+	- enum class PacketType
+	- PacketHeader 구조체
+  - 기존의 절차적 프로그래밍 코드들 객체 지향 프로그래밍으로 리팩토링
+	- WinsockGuard : 윈속 초기화 / 윈속 종료에 RAII 적용
+	- ClientSocket : accept()로 반환된 소켓(client_sock)에 RAII 적용, client_sock으로 하는 send_all() / recv_all() 함수도 ClientSocket 객체에 포함, SOCKET은 복사 금지이므로 ClientSocket 객체에 복사 방지
+	- ListenSocket : socket()으로 생성한 listen용 소켓(listen_sock, 기존에는 server_sock)에 RAII 적용, server_sock으로 하는 bind(), listen(), accept() 함수도 ListenSocket 객체에 포함, 이것도 복사 방지
+- 리팩토링 과정에서의 버그 해결
+  - 클래스 / 구조체 / 함수의 선언 순서 문제
+  - 를 해결하기 위해 구조체 / 함수들을 헤더 파일로 옮기면서 생긴 중복 정의 문제 - Server.cpp 파일의 해당 구조체 / 함수들을 삭제하여 해결함
+  - enum class PacketType 도입 후 직렬화 코드와 충돌한 문제 - 지금 당장은 enum class PacketType을 사용하지 않고 그저 PacketHeader 구조체의 type멤버를 int32_t형으로 설정해서 해결함
+  - 앞의 문제와 이어지는 PacketType을 사용하지 않게 변경했는데 Server.cpp에서 계속 사용하고 있던 문제 - PacketType을 사용하지 않는 방식으로 되돌려 해결함
+  - ListenSockAccept()의 반환값과 복사 금지 충돌 - 아직 해결하지 못함. 다음에 해결 예정
+  - 코드가 아니라 파일 인코딩 때문에 발생한 오류 - 문제가 있던 부분을 아예 새로 작성해서 해결
+- 메모 : main() 함수 내부의 리팩토링도 필요.
