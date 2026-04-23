@@ -86,7 +86,7 @@
 
 - 전체적인 리팩토링 시작
   - 사용자 정의 헤더로 분리
-	- flags(신 NetState) 구조체
+	- flags(신 : NetState) 구조체
 	- recv_all() / send_all() 함수
 	- enum class PacketType
 	- PacketHeader 구조체
@@ -102,3 +102,14 @@
   - ListenSockAccept()의 반환값과 복사 금지 충돌 - 아직 해결하지 못함. 다음에 해결 예정
   - 코드가 아니라 파일 인코딩 때문에 발생한 오류 - 문제가 있던 부분을 아예 새로 작성해서 해결
 - 메모 : main() 함수 내부의 리팩토링도 필요.
+
+### 2026.4.23
+
+- 전체적인 리팩토링 완료
+  - 서버의 main() 함수와 클라이언트의 전체 코드 OOP / RAII 방식으로 리팩토링
+    - 기존 서버 로직 유지
+  - 클라이언트에 OOP / RAII방식의 클래스 추가
+	- WinsockGuard : 윈속 초기화 / 윈속 종료에 RAII 적용
+	- ConnectSocket : socket()으로 생성한 클라이언트가 서버에 connect하는 용도의 소켓(기존에는 client_sock)에 RAII 적용, 해당 소켓으로 하는 connect() / recv_all() / send_all() 함수도 해당 객체에 포함, 객체 복사 방지
+  - 지난번 리팩토링 과정에서의 미해결 버그인 ListenSockAccept() 반환값과 복사 금지 충돌 문제 해결
+	- 이동 생성자를 추가로 정의해서 해결.
