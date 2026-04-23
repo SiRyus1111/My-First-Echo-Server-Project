@@ -439,5 +439,3 @@ socket resource lifetime == object lifetime
 * [Velog 개발 기록 시리즈](https://velog.io/@siryus0907/series/%EC%97%90%EC%BD%94-%EC%84%9C%EB%B2%84-%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8)
 
 ---
-지금 이 버전이면 README가 프로젝트 현재 상태를 더 정확히 반영한다.
-```
